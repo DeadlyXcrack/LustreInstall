@@ -1,0 +1,224 @@
+#!/bin/bash
+# Funció que mostra per pantalla i valida el menú principal
+function mainmenu(){
+read -p "Escull una opció:
+1 Instalació cliente
+2 Instalació servidor
+Introdueix la teva opció: " optionmain
+if [ $optionmain -eq 1 ]
+then
+    echo "Has seleccionat Instalar en client"
+    subclient
+else
+    if [ $optionmain -eq 2 ]
+    then
+        echo "Has seleccionat Instalar en servidor"
+        subserver
+    else
+    echo "Opció incorrecte"
+    mainmenu
+    fi
+fi
+}
+# Funció què mostra per pantalla i valida el menú de Client
+function subclient(){
+    read -p "Escull una opció:
+    1 Instalar repositoris
+    2 Instalar client
+    Introdueix la teva opció: " submenu
+    if [ $submenu -eq 1 ]
+    then
+        echo "Has seleccionat Instalar repositoris"
+        repoclient
+    else
+        if [ $submenu -eq 2 ]
+        then
+            echo "Has seleccionat Instalar en client"
+            insclient
+        else
+            echo "Opció incorrecte"
+            subclient
+        fi
+    fi
+}
+# Funció què mostra per pantalla i valida el menú de Servidor
+function subserver(){
+    read -p "Escull una opció:
+    1 Instalar repositoris
+    2 Instalar MGS-MDS
+    3 Instalar OST
+    Introdueix la teva opció: " submenu
+    if [ $submenu -eq 1 ]
+    then
+        echo "Has seleccionat Instalar repositoris"
+        reposervers
+    else
+        if [ $submenu -eq 2 ]
+        then
+            echo "Has seleccionat Instalar el MGS-MDS"
+            mgs
+        else
+            if [ $submenu -eq 3 ]
+            then
+                echo "Has seleccionat Instalar el OST"
+                ost
+            else
+                echo "Opció incorrecte"
+                subserver
+            fi
+        fi
+    fi
+}
+# Funció que valida s’hi la IP introduïda es valida mitjançant expressions regulars
+function valid_ip(){
+    read ip
+    re='^(0*(1?[0-9]{1,2}|2([0-4][0-9]|5[0-5]))\.){3}'
+    re+='0*(1?[0-9]{1,2}|2([‌​0-4][0-9]|5[0-5]))$'
+    if [[ $ip =~ $re ]]; then
+            echo "La IP introduida és: $ip"
+    else
+            valid_ip
+    fi
+}
+# Funció que demana les IPs de les màquines e instal·la els paquets necessaris per al Client
+function repoclient(){
+    echo "Introdueix la ip del client: "
+	valid_ip
+	client=$ip
+	echo "Introdueix la ip del MGS-MDS: "
+	valid_ip
+	mgs=$ip
+	echo "Introdueix la ip del OST: "
+	valid_ip
+	ost=$ip
+    sudo echo "$client      client" >> /etc/hosts
+    sudo echo "$mgs     mgs" >> /etc/hosts
+    sudo echo "$ost     ost" >> /etc/hosts
+    yum -y install epel-release
+    rpm -ivh http://download.zfsonlinux.org/epel/zfs-release.el7.centos.noarch.rpm
+    yum -y install chrony
+    systemctl start chronyd
+    systemctl enable chronyd
+    timedatectl set-timezone Europe/Madrid
+    sudo yum -y install wget
+    sudo wget https://fsx-lustre-client-repo-public-keys.s3.amazonaws.com/fsx-rpm-public-key.asc -O /tmp/fsx-rpm-public-key.asc
+    sudo rpm --import /tmp/fsx-rpm-public-key.asc
+    sudo wget https://fsx-lustre-client-repo.s3.amazonaws.com/el/7/fsx-lustre-client.repo -O /etc/yum.repos.d/aws-fsx.repo
+    cat /etc/centos-release
+    sudo sed -i 's#7#7.7#' /etc/yum.repos.d/aws-fsx.repo
+    sudo yum clean all
+    sudo yum install -y kmod-lustre-client lustre-client
+    sudo reboot
+}
+# Funció que instala el client al sistema Lustre
+function insclient(){
+    sudo modprobe lustre
+    sudo echo "/sbin/lsmod | /bin/grep lustre 1>/dev/null 2>&1
+    if [ ! $? ] ; then
+       /sbin/modprobe lustre >/dev/null 2>&1
+    fi" >> /etc/sysconfig/modules/lustre.modules
+    sudo mkdir /mnt/lustre
+    sudo mount -t lustre mgs@tcp0:/DATA /mnt/lustre
+}
+# Funció que demana les IPs de les màquines e instal·la els paquets necessaris per als Servidors
+function reposervers(){
+    echo "Introdueix la ip del client: "
+	valid_ip
+	client=$ip
+	echo "Introdueix la ip del MGS-MDS: "
+	valid_ip
+	mgs=$ip
+	echo "Introdueix la ip del OST: "
+	valid_ip
+	ost=$ip
+    sudo echo "$client      client" >> /etc/hosts
+    sudo echo "$mgs     mgs" >> /etc/hosts
+    sudo echo "$ost     ost" >> /etc/hosts
+
+    yum -y install epel-release
+    rpm -ivh http://download.zfsonlinux.org/epel/zfs-release.el7.centos.noarch.rpm
+    yum -y install chrony
+    systemctl start chronyd
+    systemctl enable chronyd
+    timedatectl set-timezone Europe/Madrid
+sudo cat << "FINAL" >> /etc/yum.repos.d/lustre.repo
+[lustre-server]
+name=lustre-server
+baseurl=https://downloads.whamcloud.com/public/lustre/latest-release/el7/server
+# exclude=debuginfo
+gpgcheck=0
+
+[lustre-client]
+name=lustre-client
+baseurl=https://downloads.whamcloud.com/public/lustre/latest-release/el7/client
+# exclude=debuginfo
+gpgcheck=0
+
+[e2fsprogs-wc]
+name=e2fsprogs-wc
+baseurl=https://downloads.whamcloud.com/public/e2fsprogs/latest/el7
+# exclude=debuginfo
+gpgcheck=0
+
+FINAL
+
+    sudo yum -y install https://downloads.whamcloud.com/public/lustre/latest-feature-release/el7/server/RPMS/x86_64/kernel-3.10.0-1062.1.1.el7_lustre.x86_64.rpm
+    sudo yum -y install https://downloads.whamcloud.com/public/lustre/latest-feature-release/el7/server/RPMS/x86_64/kmod-lustre-2.13.0-1.el7.x86_64.rpm
+    sudo yum -y install https://downloads.whamcloud.com/public/lustre/latest-feature-release/el7/server/RPMS/x86_64/lustre-osd-ldiskfs-mount-2.13.0-1.el7.x86_64.rpm
+    sudo yum -y install https://downloads.whamcloud.com/public/lustre/latest-feature-release/el7/server/RPMS/x86_64/kernel-headers-3.10.0-1062.1.1.el7_lustre.x86_64.rpm
+    sudo yum -y install https://downloads.whamcloud.com/public/lustre/latest-feature-release/el7/server/RPMS/x86_64/kernel-devel-3.10.0-1062.1.1.el7_lustre.x86_64.rpm
+    sudo yum -y install https://downloads.whamcloud.com/public/lustre/latest-feature-release/el7/server/RPMS/x86_64/kmod-lustre-osd-ldiskfs-2.13.0-1.el7.x86_64.rpm
+    sudo yum -y install https://downloads.whamcloud.com/public/lustre/latest-feature-release/el7/server/RPMS/x86_64/lustre-2.13.0-1.el7.x86_64.rpm
+    sudo yum -y install https://downloads.whamcloud.com/public/e2fsprogs/1.45.2.wc1/el7/RPMS/x86_64/e2fsprogs-1.45.2.wc1-0.el7.x86_64.rpm
+    sudo yum -y install https://downloads.whamcloud.com/public/e2fsprogs/1.45.2.wc1/el7/RPMS/x86_64/e2fsprogs-libs-1.45.2.wc1-0.el7.x86_64.rpm
+    sudo reboot
+}
+# Funció que instala el MGS/MDS
+function mgs(){
+    sudo echo 'options lnet networks="tcp0(eth0)"' >> /etc/modprobe.d/lnet.conf
+    sudo modprobe lnet
+    lnetctl lnet configure
+    sudo lsmod | grep lnet
+    sudo echo "
+    #!/bin/sh
+    if [ ! -c /dev/lnet ] ; then
+        exec /sbin/modprobe lnet >/dev/null 2>&1
+    fi" >> /etc/sysconfig/modules/lnet.modules
+    sudo lnetctl net add --net tcp0 --if eth0
+    sudo lnetctl net show
+    sudo systemctl start lustre
+    sudo systemctl enable lustre
+    sudo systemctl status lustre
+    systemctl start lustre
+    systemctl enable lustre
+    sudo mkfs.lustre --fsname=DATA --mgs --mdt --index=0 /dev/xvdb 
+    sudo mkdir /DATA
+    sudo mount -t lustre /dev/xvdb /DATA
+    myuuid=$(/sbin/blkid | /bin/grep 'xvdb' | /bin/grep -o -E 'UUID="[a-zA-Z|0-9|\-]*' | /bin/cut -c 7- | tail -2 | head -1)
+    sudo echo "UUID=$myuuid     /DATA   lustre    defaults  0 0" >> /etc/fstab
+    sudo mount -a
+}
+# Funció que instala el OST
+function ost(){
+    sudo echo 'options lnet networks="tcp0(eth0)"' >> /etc/modprobe.d/lnet.conf
+    sudo modprobe lnet
+    lnetctl lnet configure
+    sudo lsmod | grep lnet
+    sudo echo "
+    #!/bin/sh
+    if [ ! -c /dev/lnet ] ; then
+        exec /sbin/modprobe lnet >/dev/null 2>&1
+    fi" >> /etc/sysconfig/modules/lnet.modules
+    sudo lnetctl net add --net tcp0 --if eth0
+    sudo lnetctl net show
+    sudo systemctl start lustre
+    sudo systemctl enable lustre
+    sudo systemctl status lustre
+    sudo mkfs.lustre --fsname=DATA --ost --mgsnode=mgs@tcp0 --index=0 /dev/xvdb
+    sudo mkdir /ost
+    sudo mount -t lustre /dev/xvdb /ost
+    myuuid=$(/sbin/blkid | /bin/grep 'xvdb' | /bin/grep -o -E 'UUID="[a-zA-Z|0-9|\-]*' | /bin/cut -c 7- | tail -2 | head -1)
+    sudo echo "UUID=$myuuid     /ost   lustre    defaults  0 0" >> /etc/fstab
+    sudo mount -a
+}
+mainmenu
